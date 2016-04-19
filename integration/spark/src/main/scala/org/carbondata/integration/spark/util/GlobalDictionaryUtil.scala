@@ -25,8 +25,7 @@ import scala.collection.mutable.HashSet
 import scala.collection.JavaConversions.{asScalaBuffer, asScalaSet, seqAsJavaList}
 import scala.language.implicitConversions
 import org.apache.spark.sql.{ DataFrame, SQLContext }
-import org.carbondata.core.carbon.CarbonDef.Schema
-import org.carbondata.core.carbon.metadata.schema.table.column.CarbonDimension
+import org.carbondata.core.carbon.CarbonDataLoadSchema
 import org.carbondata.integration.spark.load.CarbonLoadModel
 import org.carbondata.integration.spark.rdd.ColumnPartitioner
 import org.carbondata.integration.spark.rdd.CarbonBlockDistinctValuesCombineRDD
@@ -172,7 +171,7 @@ object GlobalDictionaryUtil extends Logging {
       carbonFile.getPath
     }
   }
-  
+
   /**
    * append all file path to a String, inputPath path separated by comma 
    */
@@ -190,7 +189,7 @@ object GlobalDictionaryUtil extends Logging {
       stringbuild.substring(0, stringbuild.size -1)
     }
   }
-  
+
   /**
    * load CSV files to DataFrame by using datasource "com.databricks.spark.csv"
    *
@@ -223,25 +222,37 @@ object GlobalDictionaryUtil extends Logging {
   }
 
   /**
-   * extract dimension set from hierarchy
-   *
-   * @param schema
-   * @return: scala.collection.mutable.HashSet<java.lang.String>
+   * extract dimension set from dimension table
+   * @param carbonDataLoadSchema
+   * @return
    */
-  private def extractHierachyDimension(schema: Schema): HashSet[String] = {
+  private def extractDimensionFromDimTable(carbonDataLoadSchema: CarbonDataLoadSchema): HashSet[String] = {
     val dimensionSet = new HashSet[String]
-    val dimensions = schema.cubes(0).dimensions
-    for (i <- 0 until dimensions.length) {
-      val hierarchies = dimensions(i).getDimension(schema).hierarchies
-      for (hierachy <- hierarchies) {
-        if (hierachy.relation != null) {
-          for (level <- hierachy.levels) {
-            dimensionSet += level.column
-          }
-        }
+    for ( table <- carbonDataLoadSchema.getTableList) {
+      if(!table.isFact) {
+        dimensionSet ++= table.getColumns.toSet
       }
     }
     dimensionSet
+  }
+
+  /**
+   *  Set fact and dimension table path
+   * @param carbonLoadModel
+   */
+  private def setFactAndDimTablePath(carbonLoadModel: CarbonLoadModel): Unit = {
+    val stringBuilder = new StringBuilder
+    for(table <- carbonLoadModel.getCarbonDataLoadSchema.getTableList) {
+      if (table.isFact) {
+        carbonLoadModel.setFactFilePath(table.getTableSource)
+      }
+      else {
+        stringBuilder.append(table.getTableName + ":" + table.getTableSource + ",")
+      }
+      if (stringBuilder.nonEmpty) {
+        carbonLoadModel.setDimFolderPath(stringBuilder.substring(0,stringBuilder.size -1))
+      }
+    }
   }
 
   /**
@@ -266,19 +277,24 @@ object GlobalDictionaryUtil extends Logging {
         logError("Dictionary Folder creation status :: " + created)
         throw new IOException("Failed to created dictionary folder");
       }
+      //fill fact table and dimension table path
+      setFactAndDimTablePath(carbonLoadModel)
       //load data by using dataSource com.databricks.spark.csv
       //need new SQLContext to use spark-csv
       var df = loadDataFrame(sqlContext, carbonLoadModel.getFactFilePath)
       //configuration for generating global dict from dimension table
       var dimensionSet = new HashSet[String]
       if (carbonLoadModel.getDimFolderPath != null) {
-        dimensionSet = extractHierachyDimension(carbonLoadModel.getSchema)
+        dimensionSet = extractDimensionFromDimTable(carbonLoadModel.getCarbonDataLoadSchema)
         if (dimensionSet.size > 0) {
-          var columnName = ""
           val setIter = dimensionSet.toIterator
+          var col = ""
           while (setIter.hasNext) {
-            columnName = setIter.next
-            df = df.drop(columnName)
+            col = setIter.next()
+            for (colName <- df.columns) {
+              if(colName.equalsIgnoreCase(col))
+                df = df.drop(colName)
+            }
           }
         }
       }
@@ -298,26 +314,27 @@ object GlobalDictionaryUtil extends Logging {
         //check result status
         checkStatus(statusList)
       } else {
-        logInfo("have no column need to generate global dictionary")
+        logInfo("have no column need to generate global dictionary in fact table")
       }
       // generate global dict from dimension file
       if (carbonLoadModel.getDimFolderPath != null) {
-        val fileMapArray = carbonLoadModel.getDimFolderPath.split(",")
-        for (fileMap <- fileMapArray) {
-          val dimTableName = fileMap.split(":")(0)
-          val dimFilePath = fileMap.substring(dimTableName.length + 1)
-          var dimDataframe = loadDataFrame(sqlContext, dimFilePath)
-          val requireColumnsforDim = pruneColumns(dimensionSet.toArray, dimDataframe.columns)
-          if (requireColumnsforDim.size >= 1) {
-            dimDataframe = dimDataframe.select(requireColumnsforDim.head, requireColumnsforDim.tail: _*)
-            val modelforDim = createDictionaryLoadModel(table, requireColumnsforDim,
-              hdfsLocation, dictfolderPath, isSharedDimension)
-            val inputRDDforDim = new CarbonBlockDistinctValuesCombineRDD(dimDataframe.rdd, modelforDim)
-              .partitionBy(new ColumnPartitioner(requireColumnsforDim.length))
-            val statusListforDim = new CarbonGlobalDictionaryGenerateRDD(inputRDDforDim, modelforDim).collect()
-            checkStatus(statusListforDim)
-          } else {
-            logInfo(s"No columns in dimension table $dimTableName to generate global dictionary")
+        for (factDimTable <- carbonLoadModel.getCarbonDataLoadSchema.getTableList) {
+          if(!factDimTable.isFact) {
+            val dimTableName = factDimTable.getTableName
+            val dimFilePath = factDimTable.getTableSource
+            var dimDataframe = loadDataFrame(sqlContext, dimFilePath)
+            val requireColumnsforDim = pruneColumns(factDimTable.getColumns.toSeq.toArray, dimDataframe.columns)
+            if (requireColumnsforDim.size >= 1) {
+              dimDataframe = dimDataframe.select(requireColumnsforDim.head, requireColumnsforDim.tail: _*)
+              val modelforDim = createDictionaryLoadModel(table, requireColumnsforDim,
+                hdfsLocation, dictfolderPath, isSharedDimension)
+              val inputRDDforDim = new CarbonBlockDistinctValuesCombineRDD(dimDataframe.rdd, modelforDim)
+                .partitionBy(new ColumnPartitioner(requireColumnsforDim.length))
+              val statusListforDim = new CarbonGlobalDictionaryGenerateRDD(inputRDDforDim, modelforDim).collect()
+              checkStatus(statusListforDim)
+            } else {
+              logInfo(s"No columns in dimension table $dimTableName to generate global dictionary")
+            }
           }
         }
       }
