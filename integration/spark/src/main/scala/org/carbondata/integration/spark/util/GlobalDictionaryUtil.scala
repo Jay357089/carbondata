@@ -62,17 +62,19 @@ object GlobalDictionaryUtil extends Logging {
    */
   def pruneColumns(dimensions: Array[String], columns: Array[String]) = {
     val columnBuffer = new ArrayBuffer[String]
+    val columnforDataFrame = new ArrayBuffer[String]
     for (dim <- dimensions) {
       breakable {
         for (i <- 0 until columns.length) {
           if (dim.equalsIgnoreCase(columns(i))) {
             columnBuffer += dim
+            columnforDataFrame += columns(i)
             break
           }
         }
       }
     }
-    columnBuffer.toArray
+    (columnBuffer.toArray, columnforDataFrame.toArray)
   }
 
   /**
@@ -300,10 +302,11 @@ object GlobalDictionaryUtil extends Logging {
       }
       //columns which need to generate global dictionary file
       val carbonTable = carbonLoadModel.getCarbonDataLoadSchema.getCarbonTable
-      val requireColumns = pruneColumns(carbonTable.getDimensionByTableName(carbonTable.getFactTableName).toSeq.map(dim => dim.getColName).toArray, df.columns)
+      val (requireColumns, dataFrameColumn) = pruneColumns(carbonTable.
+        getDimensionByTableName(carbonTable.getFactTableName).toSeq.map(dim => dim.getColName).toArray, df.columns)
       if (requireColumns.size >= 1) {
         //select column to push down pruning
-        df = df.select(requireColumns.head, requireColumns.tail: _*)
+        df = df.select(dataFrameColumn.head, dataFrameColumn.tail: _*)
         val model = createDictionaryLoadModel(table, requireColumns,
           hdfsLocation, dictfolderPath, isSharedDimension)
         //combine distinct value in a block and partition by column
@@ -323,9 +326,9 @@ object GlobalDictionaryUtil extends Logging {
             val dimTableName = factDimTable.getTableName
             val dimFilePath = factDimTable.getTableSource
             var dimDataframe = loadDataFrame(sqlContext, dimFilePath)
-            val requireColumnsforDim = pruneColumns(factDimTable.getColumns.toSeq.toArray, dimDataframe.columns)
+            val (requireColumnsforDim, dataFrameColumn) = pruneColumns(factDimTable.getColumns.toSeq.toArray, dimDataframe.columns)
             if (requireColumnsforDim.size >= 1) {
-              dimDataframe = dimDataframe.select(requireColumnsforDim.head, requireColumnsforDim.tail: _*)
+              dimDataframe = dimDataframe.select(dataFrameColumn.head, dataFrameColumn.tail: _*)
               val modelforDim = createDictionaryLoadModel(table, requireColumnsforDim,
                 hdfsLocation, dictfolderPath, isSharedDimension)
               val inputRDDforDim = new CarbonBlockDistinctValuesCombineRDD(dimDataframe.rdd, modelforDim)
