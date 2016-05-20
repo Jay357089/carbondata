@@ -180,8 +180,9 @@ class CarbonStrategies(sqlContext: SQLContext) extends QueryPlanner[SparkPlan] {
       case LoadCube(schemaNameOp, cubeName, factPathFromUser, dimFilesPath,
         partionValues, isOverwriteExist, inputSqlString) =>
         val isCarbonTable = CarbonEnv.getInstance(sqlContext).carbonCatalog
-          .cubeExists(schemaNameOp, cubeName)(sqlContext);
-        if (isCarbonTable) {
+          .cubeExists(schemaNameOp, cubeName)(sqlContext)
+        if (isCarbonTable ||
+          inputSqlString.split("[ ,]").exists(_.equalsIgnoreCase("OPTIONS"))) {
           ExecutedCommand(LoadCube(schemaNameOp, cubeName, factPathFromUser,
             dimFilesPath, partionValues, isOverwriteExist, inputSqlString)) :: Nil
         } else {

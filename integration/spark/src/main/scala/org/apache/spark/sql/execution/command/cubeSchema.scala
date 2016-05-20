@@ -1809,9 +1809,9 @@ private[sql] case class LoadCube(
     }
     if (null == org.carbondata.core.carbon.metadata.CarbonMetadata.getInstance
         .getCarbonTable(schemaName + "_" + cubeName)) {
-      logError("Data loading failed. cube not found: " + schemaName + "_" + cubeName)
-      LOGGER.audit("Data loading failed. cube not found: " + schemaName + "_" + cubeName)
-      sys.error("Data loading failed. cube not found: " + schemaName + "_" + cubeName)
+      logError("Data loading failed. table not found: " + schemaName + "_" + cubeName)
+      LOGGER.audit("Data loading failed. table not found: " + schemaName + "_" + cubeName)
+      sys.error("Data loading failed. table not found: " + schemaName + "_" + cubeName)
     }
     CarbonProperties.getInstance().addProperty("zookeeper.enable.lock", "false")
     val carbonLock = CarbonLockFactory.getCarbonLockObj(org.carbondata.core.
