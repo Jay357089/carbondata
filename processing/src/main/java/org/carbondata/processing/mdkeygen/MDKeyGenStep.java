@@ -191,15 +191,15 @@ public class MDKeyGenStep extends BaseStep {
       LOGGER.error(e, "Failed for table: " + this.tableName);
       throw new KettleException("Error while initializing data handler : " + e.getMessage());
     } catch (Exception e) {
-      LOGGER.error(e, "Failed for table: " + this.tableName);
-      throw new KettleException("There is unexpected error: " + e.getMessage());
+      LOGGER.error(e, "Failed for table: " + this.tableName + " in MDKeyGenStep");
+      throw new KettleException("There is an unexpected error: " + e.getMessage());
     } finally {
       try {
         dataHandler.finish();
       } catch (CarbonDataWriterException e) {
         LOGGER.debug("Error in  closing data handler ");
       } catch (Exception e) {
-        LOGGER.error(e, "Failed for table: " + this.tableName);
+        LOGGER.error(e, "Failed for table: " + this.tableName + " in dataHandler.finish");
       }
     }
     LOGGER.info("Record Procerssed For table: " + this.tableName);
